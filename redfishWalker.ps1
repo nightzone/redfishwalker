@@ -161,7 +161,7 @@ function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$Sess
             {    
                 # Save json file UTF-8
                 [IO.File]::WriteAllLines($_filepath, $_jsonResp)
-                Redfish_Walk -jsonObj $_resp -IPaddress $IPaddress -odataID $Resource -OutputDir $scriptDir
+                Redfish_Walk -jsonObj $_resp -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
             }
         }
         catch
@@ -173,8 +173,8 @@ function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$Sess
     }
     else
     {
-        Write-Host "Resource already collected:"
-        Write-Host $Resource
+ #       Write-Host "Resource already collected:"
+ #       Write-Host $Resource
         return $null
     }
 }
@@ -184,18 +184,18 @@ function Redfish_Walk($jsonObj,[String]$IPaddress,[String]$Resource,[String]$Ses
     if ($jsonObj -is [System.Collections.IDictionary])
     {
         foreach($_key in $jsonObj.Keys)
-        {
-            if(($_key -eq "@odata.id") -and ($jsonObj.$_key -ne $Resource) -and !($jsonObj.$_key.contains("#")) )  #-and ($jsonObj.$_key.contains("$Resource"))
-            {
-                Get_Redfish_Resource -IPaddress $_ipaddress -Resource $jsonObj.$_key -OutputDir $scriptDir
-            }
-            elseif($jsonObj.$_key -is [System.Collections.IDictionary])
+        {            
+            if($jsonObj.$_key -is [System.Collections.IDictionary])
             {
                 Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
             }
             elseif($jsonObj.$_key -is [Array])
             {
                 Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
+            }            
+            elseif( (($_key -eq "@odata.id") -or ($_key -eq "Uri")) -and ($jsonObj.$_key -ne $Resource) -and !($jsonObj.$_key.contains("#")) -and ($jsonObj.$_key.StartsWith("/redfish")) )  #-and ($jsonObj.$_key.contains("$Resource"))
+            {
+                Get_Redfish_Resource -IPaddress $_ipaddress -Resource $jsonObj.$_key -OutputDir $scriptDir
             }
         }
     }
@@ -232,14 +232,14 @@ $_header.Add("X-Auth-Token", $_sessionKey)
 
 
 #$_filename = "index.json"
-#$_odataID = "/redfish/v1"
-$_odataID = "/redfish/v1/Systems/1/PCIDevices"
+$_resource = "/redfish/v1"
+#$_resource = "/redfish/v1/Systems/1/PCIDevices"
 
 $scriptDir = $PSScriptRoot + "\output"
 
 #Get_Uri -IPaddress $_ipaddress -odataID $_odataID -OutputDir $scriptDir
 
-Get_Uri -IPaddress $_ipaddress -odataID $_odataID -OutputDir $scriptDir
+Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_resource -OutputDir $scriptDir
 
 # $_resp -is [System.Collections.IDictionary]
 

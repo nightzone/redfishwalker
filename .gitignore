@@ -9,6 +9,7 @@ iplist*.txt
 /result*
 /gdconf*
 /syconf*
+/output*
 
 # ignore specific files
 *.zip
