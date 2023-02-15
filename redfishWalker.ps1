@@ -134,8 +134,42 @@ function Create_Dir([String]$Path)
     return $true
 }
 
-function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$SessionKey,[String]$OutputDir)
+# Read hardware profile from json folder
+function Read_Profile([String]$ProfileName)
 {
+    $_profileDir = "profiles"
+    $_profilePath = Join-Path $PSScriptRoot "profiles" | Join-Path -ChildPath $ProfileName
+
+    try
+    {
+	    if((Test-Path $_profilePath) -and ($_profilePath.endswith(".json")) )
+	    {
+		    $_content = Get-Content -Path $_profilePath
+            $_profileObj = $_content | ConvertFrom-Json
+            return $_profileObj
+	    }
+        else
+        {
+            Write-Host "System profile" $ProfileName "not found in folder 'profiles'." 
+            return $null
+        }
+    }
+    catch
+    {
+        Write-Host "Cannot read profile:`n" $_profilePath
+        Write-Host "Error:"
+        Write-Host $_
+        return $null
+    }
+}
+
+# If $Scan is True it gets all found resources
+# If $Scan is False it gets only Tree from given resource
+# If $Once is True it gets resource and exit
+function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$SessionKey,[String]$OutputDir,[Boolean]$Scan=$true,[Boolean]$Once=$false)
+{
+    $Resource = $Resource.ToLower()
+
     $_uri = "https://" + $IPaddress + $Resource
     $_filename = "index.json"
 
@@ -149,19 +183,22 @@ function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$Sess
         {
             Write-Host $Resource
             # get Uri
-            $_respWeb = Invoke-WebRequest -Uri $_uri -Method Get -Headers $_header -UseBasicParsing 
+            $_respWeb = Invoke-WebRequest -Uri $_uri -Method Get -Headers $_header -UseBasicParsing -TimeoutSec 20
             $_resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($_respWeb)           
             # convert to json
             $_jsonResp = $_resp | ConvertTo-Json -Depth 99
 
-            
-          #  $_filepath = $_path | Join-Path -ChildPath $_filename 
-           # $_jsonResp | Out-File -Encoding ascii $_filepath
+            # Create or check if Dir exist
             if (Create_Dir -Path $_path)
             {    
                 # Save json file UTF-8
                 [IO.File]::WriteAllLines($_filepath, $_jsonResp)
-                Redfish_Walk -jsonObj $_resp -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
+
+                if ($Once) 
+                {
+                    return $null
+                }
+                Redfish_Walk -jsonObj $_resp -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
             }
         }
         catch
@@ -173,13 +210,11 @@ function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$Sess
     }
     else
     {
- #       Write-Host "Resource already collected:"
- #       Write-Host $Resource
         return $null
     }
 }
 
-function Redfish_Walk($jsonObj,[String]$IPaddress,[String]$Resource,[String]$SessionKey,[String]$OutputDir)
+function Redfish_Walk($jsonObj,[String]$IPaddress,[String]$Resource,[String]$SessionKey,[String]$OutputDir,[Boolean]$Scan=$true)
 {
     if ($jsonObj -is [System.Collections.IDictionary])
     {
@@ -187,15 +222,25 @@ function Redfish_Walk($jsonObj,[String]$IPaddress,[String]$Resource,[String]$Ses
         {            
             if($jsonObj.$_key -is [System.Collections.IDictionary])
             {
-                Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
+                Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
             }
             elseif($jsonObj.$_key -is [Array])
             {
-                Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
+                Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
             }            
-            elseif( (($_key -eq "@odata.id") -or ($_key -eq "Uri")) -and ($jsonObj.$_key -ne $Resource) -and !($jsonObj.$_key.contains("#")) -and ($jsonObj.$_key.StartsWith("/redfish")) )  #-and ($jsonObj.$_key.contains("$Resource"))
+            elseif( ($_key -eq "@odata.id") -or ($_key -eq "Uri") -or ($_key -eq "Members@odata.nextLink") -or ($_key -eq "@Redfish.ActionInfo") )  
             {
-                Get_Redfish_Resource -IPaddress $_ipaddress -Resource $jsonObj.$_key -OutputDir $scriptDir
+                $_nextResource = $jsonObj.$_key.ToLower()
+
+                # check if goes only in tree
+                if (!($Scan) -and !($_nextResource.contains("$Resource")))
+                {
+                   continue
+                }
+                if( ($_nextResource -ne $Resource) -and !($_nextResource.contains("#")) -and ($_nextResource.StartsWith("/redfish"))  )  #-and ($_nextResource.contains("$Resource"))
+                {
+                    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $jsonObj.$_key -OutputDir $scriptDir -Scan $Scan
+                }
             }
         }
     }
@@ -205,7 +250,7 @@ function Redfish_Walk($jsonObj,[String]$IPaddress,[String]$Resource,[String]$Ses
         {
             if (($_item -is [System.Collections.IDictionary]) -or ($_item -is [Array]))
             {
-                 Redfish_Walk -jsonObj $_item -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir
+                 Redfish_Walk -jsonObj $_item -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
             }
         }
 
@@ -226,22 +271,27 @@ $_header.Add("X-Auth-Token", $_sessionKey)
 
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = [SSLHandler]::GetSSLHandler()
 
-
-#$_respWeb = Invoke-WebRequest -Uri $_uri -Method Get -Headers $_header -UseBasicParsing 
-#$_resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($_respWeb)
-
-
-#$_filename = "index.json"
 $_resource = "/redfish/v1"
 #$_resource = "/redfish/v1/Systems/1/PCIDevices"
 
 $scriptDir = $PSScriptRoot + "\output"
 
-#Get_Uri -IPaddress $_ipaddress -odataID $_odataID -OutputDir $scriptDir
+$_profileObj = Read_Profile -ProfileName "iLO5.json"
 
-Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_resource -OutputDir $scriptDir
+foreach ($_item in $_profileObj.scan)
+{
+    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_item -OutputDir $scriptDir
+}
 
-# $_resp -is [System.Collections.IDictionary]
+foreach ($_item in $_profileObj.tree)
+{
+    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_item -OutputDir $scriptDir -Scan $false
+}
+
+foreach ($_item in $_profileObj.once)
+{
+    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_item -OutputDir $scriptDir -Once $true
+}
 
 # Close session
 $_respWeb = Invoke-WebRequest -Uri $_location -Method Delete -Headers $_header -UseBasicParsing 
