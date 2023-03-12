@@ -1,14 +1,66 @@
-﻿
-$_ip = "10.72.14.119"
+﻿<#
 
-$_uri = "https://" + $_ip + "/redfish/v1"
+redfishWalker - walks through Redfish URI tree and collects data to JSON files
 
-$_header = @{}
-$_header.Add("Content-Type","application/json")
-$_header.Add("Accept-Language", "en_US")
+Developed by Sergii Oleshchenko
+
+#>
+
+param([String]$ipaddress,[String]$user,[String]$password,[String]$profile="default.profile")
+
+$scriptVersion = "v1.0 PS"
+
+$product = ""
+$vendor = ""
+[Boolean]$askProfile = $false
+
+$header = @{}
+$header.Add("Content-Type","application/json")
+$header.Add("Accept-Language", "en_US")
+
+# Save Progress Preference and set it to silent
+$oldProgressPreference = $progressPreference
+$progressPreference = 'SilentlyContinue'
+
+Write-Host "`nredfishWalker" $scriptVersion "- walks through Redfish URIs`n"
+
+# read params
+if (!($ipaddress))
+{
+    $ipaddress = Read-Host "Enter IP address"
+    $askProfile = $true
+}
+if (!($user))
+{
+    $user = Read-Host "Enter Username"
+    $askProfile = $true
+}
+if (!($password))
+{
+  #  $password = Read-Host -AsSecureString "Enter Password"
+    [SecureString]$password = Read-Host -AsSecureString "Enter Password"
+    $decryptPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
+    [string]$password = $decryptPassword
+    $askProfile = $true
+}
+if (!($profile))
+{
+    $profile = Read-Host "Enter Profile to use [default.profile]"
+    if (!($profile))
+    {
+        $profile = "default.profile"
+    }
+}
+
+# write params
+Write-Host
+Write-Host "IP address:" $ipaddress
+Write-Host "Username:  " $user
+Write-Host "Profile:   " $profile
+
 
 # create class to handle SSL errors
-$_code = @"
+$code = @"
 public class SSLHandler
 {
     public static System.Net.Security.RemoteCertificateValidationCallback GetSSLHandler()
@@ -22,32 +74,40 @@ public class SSLHandler
 #compile the class
 if (-not ([System.Management.Automation.PSTypeName]'SSLHandler').Type)
 {
-    Add-Type -TypeDefinition $_code
+    Add-Type -TypeDefinition $code
 }
 
 # added for JavaScript serialized object
 [void][System.Reflection.Assembly]::LoadWithPartialName("System.Web.Extensions")
 
+# to support zipping
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = [SSLHandler]::GetSSLHandler()
 
 # Check if Redfish API exists on the host
-function Check_Redfish_Connection([String]$IPaddress)
+function Check_Redfish_Connection([String]$ipaddress)
 {
-    $_uri = "https://" + $ipaddress + "/redfish/v1"
+    $uri = "https://" + $ipaddress + "/redfish/v1/"
     
+    $product = ""
+    $vendor = ""
+
     Write-Host "`nConnectivity check......" $ipaddress "...... " -NoNewline
 
     try
     {
-        $_respWeb = Invoke-WebRequest -Uri $_uri -Method Get -Headers $_header -UseBasicParsing 
-        $_resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($_respWeb)
+        $respWeb = Invoke-WebRequest -Uri $uri -Method Get -UseBasicParsing -Headers $header -TimeoutSec 10 
+        $resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($respWeb)
 
-        if ($_resp.ContainsKey("Product"))
+        if ($resp.ContainsKey("Product"))
         {
+            $product = $resp.Product
+            $vendor = $resp.Vendor
             Write-Host "Pass."
-            Write-Host "Product:" $_resp.Product
-            Write-Host "Vendor: " $_resp.Vendor
-            return $true
+            Write-Host "Product:" $product
+            Write-Host "Vendor: " $vendor
+            return $true, $product, $vendor
         }
     }
     catch
@@ -55,7 +115,7 @@ function Check_Redfish_Connection([String]$IPaddress)
         Write-Host "Fail."
         Write-Host "Error ocurred:"
         Write-Host $_
-        return $false
+        return $false, $product, $vendor
     }
 }
 
@@ -63,40 +123,27 @@ function Check_Redfish_Connection([String]$IPaddress)
 # Authenticate to host and return SessionKey and Location
 function Create_Session([String]$IPaddress, [String]$Login, [String]$Password)
 {
-  $_uri = "https://" + $IPaddress + "/redfish/v1/SessionService/Sessions"
-  $_sessionKey = ""
-  $_location = ""
+  $uri = "https://" + $IPaddress + "/redfish/v1/SessionService/Sessions/"
+  $sessionKey = ""
+  $location = ""
 
   Write-Host "`nTrying to log on as" $Login "..."
-  # Check if domain credentials
-  if($Login.Contains("\"))
-  {
-    $_domain = $Login.Split("\")[0]
-    $_username = $Login.Split("\")[1]
-  }
-  else
-  {
-    $_domain = ""
-    $_username = $Login
-  }
 
-  $_body = [Ordered]@{
-     #  "authLoginDomain" = $domain
-     #  "loginMsgAck"     = 'true'
+  $body = [Ordered]@{
        "UserName"        = $Login
        "Password"        = $Password
        }
 
-  $_bodyJSON = ConvertTo-Json $_body
+  $bodyJSON = ConvertTo-Json $body
 
   try
   {
     #disable SSL checks using new class
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = [SSLHandler]::GetSSLHandler()
-    $_respWeb = Invoke-WebRequest -Uri $_uri -Method POST -Headers $_header -Body $_bodyJSON -UseBasicParsing
-    $_headers = $_respWeb.Headers
-    $_sessionKey = $_headers."X-Auth-Token"
-    $_location = $_headers.Location
+    $respWeb = Invoke-WebRequest -Uri $uri -Method POST -Headers $header -Body $bodyJSON -UseBasicParsing -TimeoutSec 10
+    $headers = $respWeb.Headers
+    $sessionKey = $headers."X-Auth-Token"
+    $location = $headers.Location
     Write-Host "Logged on successfully."
   }
   catch
@@ -111,7 +158,7 @@ function Create_Session([String]$IPaddress, [String]$Login, [String]$Password)
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
   }
 
-  return $_sessionKey, $_location
+  return $sessionKey, $location
 }
 
 # Create Directory and return Status True - created or exist, False - fails to create
@@ -134,19 +181,19 @@ function Create_Dir([String]$Path)
     return $true
 }
 
-# Read hardware profile from json folder
-function Read_Profile([String]$ProfileName)
+# Read hardware profile from json file
+function Read_Profile_JSON([String]$ProfileName)
 {
-    $_profileDir = "profiles"
-    $_profilePath = Join-Path $PSScriptRoot "profiles" | Join-Path -ChildPath $ProfileName
+    $profileDir = "profiles"
+    $profilePath = Join-Path $PSScriptRoot "profiles" | Join-Path -ChildPath $ProfileName
 
     try
     {
-	    if((Test-Path $_profilePath) -and ($_profilePath.endswith(".json")) )
+	    if((Test-Path $profilePath) -and ($profilePath.endswith(".json")) )
 	    {
-		    $_content = Get-Content -Path $_profilePath
-            $_profileObj = $_content | ConvertFrom-Json
-            return $_profileObj
+		    $content = Get-Content -Path $profilePath
+            $profileObj = $content | ConvertFrom-Json
+            return $profileObj
 	    }
         else
         {
@@ -156,11 +203,81 @@ function Read_Profile([String]$ProfileName)
     }
     catch
     {
-        Write-Host "Cannot read profile:`n" $_profilePath
+        Write-Host "Cannot read profile:`n" $profilePath
         Write-Host "Error:"
         Write-Host $_
         return $null
     }
+}
+
+# Read hardware profile from a file
+function Read_Profile([String]$ProfileName)
+{
+    $profileDir = "profiles"
+    $profilePath = Join-Path $PSScriptRoot "profiles" | Join-Path -ChildPath $ProfileName
+
+    $profileObj = [System.Collections.IDictionary]@{
+       scan = @()
+       tree = @()
+       once = @()
+       exclude = @()
+    }
+
+    try
+    {
+	    if((Test-Path $profilePath) -and ($profilePath.endswith(".profile")) )
+	    {
+		    $content = Get-Content -Path $profilePath
+            $section = ""
+            foreach ($line in $content)
+            {
+                if ( ($line -match '^\[.+\]$') -and $line.SubString(1,$line.length-2) -in $profileObj.keys) 
+                {
+                    $section = $line.SubString(1,$line.length-2)
+                    continue
+                }
+                if ($section -and ($line.length -gt 3) )
+                {
+                    $profileObj.$section += $line
+                }
+            }
+            return [PSCustomObject]$profileObj
+	    }
+        else
+        {
+            Write-Host "System profile" $ProfileName "not found in folder 'profiles'." 
+            return $null
+        }
+    }
+    catch
+    {
+        Write-Host "Cannot read profile:`n" $profilePath
+        Write-Host "Error:"
+        Write-Host $_
+        return $null
+    }
+}
+
+# check if redfish resource uri contains exlude values
+function Check_If_Exclude([String]$redfishResource,[Array]$excludeList)
+{
+    try
+    {
+        foreach ($item in $excludeList)
+        {
+            if ($redfishResource.Contains($item.ToLower()))
+            {
+                return $true 
+            }
+        }
+    }
+    catch
+    {
+        Write-Host "Cannot check exclude list.`nError:"
+        Write-Host $_
+        return $false
+    }
+    return $false
 }
 
 # If $Scan is True it gets all found resources
@@ -168,37 +285,43 @@ function Read_Profile([String]$ProfileName)
 # If $Once is True it gets resource and exit
 function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$SessionKey,[String]$OutputDir,[Boolean]$Scan=$true,[Boolean]$Once=$false)
 {
+
+    # check if "/" at the end of uri and add if not
     $Resource = $Resource.ToLower()
+    if (!$Resource.EndsWith("/"))
+    {
+        $Resource = $Resource + "/"
+    }
 
-    $_uri = "https://" + $IPaddress + $Resource
-    $_filename = "index.json"
+    $uri = "https://" + $IPaddress + $Resource
+    $filename = "index.json"
 
-    $_path = Join-Path $OutputDir $Resource
-    $_filepath = $_path | Join-Path -ChildPath $_filename 
+    $path = Join-Path $OutputDir $Resource
+    $filepath = $path | Join-Path -ChildPath $filename 
 
     # Get Data if index.json does not exist
-    if (!(Test-Path -Path $_filePath ))
+    if (!(Test-Path -Path $filePath ))
     {
         try
         {
             Write-Host $Resource
             # get Uri
-            $_respWeb = Invoke-WebRequest -Uri $_uri -Method Get -Headers $_header -UseBasicParsing -TimeoutSec 20
-            $_resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($_respWeb)           
+            $respWeb = Invoke-WebRequest -Uri $uri -Method Get -Headers $header -UseBasicParsing -TimeoutSec 10
+            $resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($respWeb)           
             # convert to json
-            $_jsonResp = $_resp | ConvertTo-Json -Depth 99
+            $jsonResp = $resp | ConvertTo-Json -Depth 99
 
             # Create or check if Dir exist
-            if (Create_Dir -Path $_path)
+            if (Create_Dir -Path $path)
             {    
                 # Save json file UTF-8
-                [IO.File]::WriteAllLines($_filepath, $_jsonResp)
+                [IO.File]::WriteAllLines($filepath, $jsonResp)
 
                 if ($Once) 
                 {
                     return $null
                 }
-                Redfish_Walk -jsonObj $_resp -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
+                Redfish_Walk -jsonObj $resp -IPaddress $IPaddress -Resource $Resource -OutputDir $OutputDir -Scan $Scan
             }
         }
         catch
@@ -218,82 +341,151 @@ function Redfish_Walk($jsonObj,[String]$IPaddress,[String]$Resource,[String]$Ses
 {
     if ($jsonObj -is [System.Collections.IDictionary])
     {
-        foreach($_key in $jsonObj.Keys)
+        foreach($key in $jsonObj.Keys)
         {            
-            if($jsonObj.$_key -is [System.Collections.IDictionary])
+            if($jsonObj.$key -is [System.Collections.IDictionary])
             {
-                Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
+                Redfish_Walk -jsonObj $jsonObj.$key -IPaddress $IPaddress -Resource $Resource -OutputDir $OutputDir -Scan $Scan
             }
-            elseif($jsonObj.$_key -is [Array])
+            elseif($jsonObj.$key -is [Array])
             {
-                Redfish_Walk -jsonObj $jsonObj.$_key -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
+                Redfish_Walk -jsonObj $jsonObj.$key -IPaddress $IPaddress -Resource $Resource -OutputDir $OutputDir -Scan $Scan
             }            
-            elseif( ($_key -eq "@odata.id") -or ($_key -eq "Uri") -or ($_key -eq "Members@odata.nextLink") -or ($_key -eq "@Redfish.ActionInfo") )  
+            elseif( ($key -eq "@odata.id") -or ($key -eq "Uri") -or ($key -eq "href") -or ($key -eq "Members@odata.nextLink") -or ($key -eq "@Redfish.ActionInfo") )  
             {
-                $_nextResource = $jsonObj.$_key.ToLower()
+                $nextResource = $jsonObj.$key.ToLower()
 
-                # check if goes only in tree
-                if (!($Scan) -and !($_nextResource.contains("$Resource")))
+                # check if goes only in tree or exclude next resource
+                if (!($Scan) -and !($nextResource.contains("$Resource")) -or (Check_If_Exclude -redfishResource $nextResource -excludeList $profileObj.exclude ) )
                 {
                    continue
                 }
-                if( ($_nextResource -ne $Resource) -and !($_nextResource.contains("#")) -and ($_nextResource.StartsWith("/redfish"))  )  #-and ($_nextResource.contains("$Resource"))
+                if( ($nextResource -ne $Resource) -and !($nextResource.contains("#")) -and ($nextResource.StartsWith("/redfish"))  )  #-and ($nextResource.contains("$Resource"))
                 {
-                    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $jsonObj.$_key -OutputDir $scriptDir -Scan $Scan
+                    Get_Redfish_Resource -IPaddress $IPaddress -Resource $jsonObj.$key -OutputDir $OutputDir -Scan $Scan
                 }
             }
         }
     }
     elseif($jsonObj -is [Array])
     {
-        foreach($_item in $jsonObj)
+        foreach($item in $jsonObj)
         {
-            if (($_item -is [System.Collections.IDictionary]) -or ($_item -is [Array]))
+            if (($item -is [System.Collections.IDictionary]) -or ($item -is [Array]))
             {
-                 Redfish_Walk -jsonObj $_item -IPaddress $IPaddress -Resource $Resource -OutputDir $scriptDir -Scan $Scan
+                 Redfish_Walk -jsonObj $item -IPaddress $IPaddress -Resource $Resource -OutputDir $OutputDir -Scan $Scan
             }
         }
 
     }
 }
 
+$if_connect, $product, $vendor = Check_Redfish_Connection -ipaddress $ipaddress
+$sessionKey = ""
 
-
-$_ipaddress = "10.72.14.119"
-
-
-$_if_connect = Check_Redfish_Connection -ipaddress $_ipaddress
-$_sessionKey, $_location = Create_Session -IPaddress $_ipaddress -Login hpadmin -Password hpinvent
-
-$_header.Add("X-Auth-Token", $_sessionKey)
-
-
-
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = [SSLHandler]::GetSSLHandler()
-
-$_resource = "/redfish/v1"
-#$_resource = "/redfish/v1/Systems/1/PCIDevices"
-
-$scriptDir = $PSScriptRoot + "\output"
-
-$_profileObj = Read_Profile -ProfileName "iLO5.json"
-
-foreach ($_item in $_profileObj.scan)
+if ($if_connect)
 {
-    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_item -OutputDir $scriptDir
+    $sessionKey, $location = Create_Session -IPaddress $ipaddress -Login $user -Password $password
+    $header.Add("X-Auth-Token", $sessionKey)
 }
 
-foreach ($_item in $_profileObj.tree)
+if ($sessionKey)
 {
-    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_item -OutputDir $scriptDir -Scan $false
+
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = [SSLHandler]::GetSSLHandler()
+
+    $resource = "/redfish/v1/"
+
+	# Create Temporary Output Directory
+	$scriptDir = $PSScriptRoot
+	$currentTime = Get-Date -Format "yyyyMMddHHmmss".toString()
+	$outputDir = Join-Path $scriptDir ("output" + $currentTime)
+
+	if(!(Test-Path ($outputDir))){
+			New-Item $outputDir -ItemType Directory | Out-Null
+	}
+	else {
+		Remove-Item -Path $outputDir -Recurse
+		New-Item $outputDir -ItemType Directory | Out-Null
+	}
+
+   # $scriptDir = $PSScriptRoot + "\output"
+
+    $profileObj = Read_Profile -ProfileName $profile
+
+    Write-Host "`nLets walk...`n"
+
+    # Scan all resources
+    foreach ($item in $profileObj.scan)
+    {
+        Get_Redfish_Resource -IPaddress $ipaddress -Resource $item -OutputDir $outputDir
+    }
+
+    # Scan only specific branch
+    foreach ($item in $profileObj.tree)
+    {
+        Get_Redfish_Resource -IPaddress $ipaddress -Resource $item -OutputDir $outputDir -Scan $false
+    }
+
+    # Get specific URI only
+    foreach ($item in $profileObj.once)
+    {
+        Get_Redfish_Resource -IPaddress $ipaddress -Resource $item -OutputDir $outputDir -Once $true
+    }
+
+    # Close session
+    $respWeb = Invoke-WebRequest -Uri $location -Method Delete -Headers $header -UseBasicParsing 
+
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
+
+    # Create and write info.txt
+	$scriptMeta = [pscustomobject]@{
+		description =  'Redfish URIs collection'
+		application = 'redfishWalker'
+		version = $scriptVersion
+		system = $ipaddress
+        product = $product
+		vendor =  $vendor
+		timestamp = Get-Date -Format "yyyy-MM-dd hh:mm:ss".ToString()
+    }
+
+    $scriptMetaJSON = $scriptMeta | ConvertTo-Json -Depth 99 
+    # Save meta file UTF-8
+    $scriptMetaFilePath = Join-Path $outputDir "info.txt"
+    [IO.File]::WriteAllLines($scriptMetaFilePath, $scriptMetaJSON)
+
+		if(Test-Path $outputDir){
+                    $filePrefix = "output"
+					$currentTime = Get-Date -Format "yyyyMMdd.HHmmss".toString()
+					$archiveName = $filePrefix + "-" + $ipaddress + "-" + $currentTime + ".zip"
+					$archivePath = Join-Path $scriptDir $archiveName
+
+                    if(Test-Path $archivePath){
+	                     Remove-Item -Path $archivePath
+                    }
+                    try
+                    {
+                        Invoke-Command -ScriptBlock {[System.IO.Compression.ZipFile]::CreateFromDirectory($outputDir, $archivePath)} | Wait-Job
+                        Remove-Item -Path $outputDir -Recurse
+                        Write-Host "`nOutput saved to:"
+                        Write-Host "Path: " $scriptDir
+                        Write-Host "File: " $archiveName
+                    }
+                    catch
+                    {
+                        Write-Host "`nCannot create .zip archive"
+                        Write-Host "Configuration located in folder:" $scriptDir.Split("\")[-1]
+                    }
+                    finally
+                    {
+                        # Set progress Preference back
+                        $progressPreference = $oldProgressPreference
+
+                    }
+
+		}
+		else {
+			# Folder cannot be removed
+		}
+
 }
-
-foreach ($_item in $_profileObj.once)
-{
-    Get_Redfish_Resource -IPaddress $_ipaddress -Resource $_item -OutputDir $scriptDir -Once $true
-}
-
-# Close session
-$_respWeb = Invoke-WebRequest -Uri $_location -Method Delete -Headers $_header -UseBasicParsing 
-
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null

@@ -2,13 +2,12 @@
     "scan": [
 		"/redfish",
 		"/redfish/v1/odata",
-	#	"/redfish/v1/$metadata",
 		"/redfish/v1"
 	],
-	"include": [
+	"tree": [
 	],
-	"exclude": [
+	"once": [
 	],
-	"once":	[
+	"exclude":	[
 	]
 }
