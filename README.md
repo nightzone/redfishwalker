@@ -6,7 +6,7 @@ Script requires profile that specifies OIDs to collect.<br>
 You can use predefined profiles or create your own to collect just what you need.<br>
 Configuration profile supported in two formats `.json` and `.profile` and stored in `profiles` directory under script root folder.<br>
 
-It has four sections:<br>
+Profile has four sections:<br>
 `scan`&emsp;Script walks through all oids found<br> 
 `tree`&emsp;Script walks only throug parent tree<br>
 `once`&emsp;Script collect oid once<br>
