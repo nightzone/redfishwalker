@@ -1,6 +1,6 @@
 ﻿<#
 
-redfishWalker - walks through Redfish URI tree and collects data to JSON files
+redfishWalker - walks through Redfish OIDs tree and collects data to JSON files
 
 Developed by Sergii Oleshchenko
 
