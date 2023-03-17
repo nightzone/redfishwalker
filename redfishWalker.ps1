@@ -6,7 +6,7 @@ Developed by Sergii Oleshchenko
 
 #>
 
-param([String]$ipaddress,[String]$user,[String]$password,[String]$profile="default.profile")
+param([String]$ipaddress,[String]$user,[String]$password,[String]$walkProfile="default.profile")
 
 $scriptVersion = "v1.0 PS"
 
@@ -22,7 +22,7 @@ $header.Add("Accept-Language", "en_US")
 $oldProgressPreference = $progressPreference
 $progressPreference = 'SilentlyContinue'
 
-Write-Host "`nredfishWalker" $scriptVersion "- walks through Redfish URIs`n"
+Write-Host "`nredfishWalker" $scriptVersion "- walks through Redfish OIDs`n"
 
 # read params
 if (!($ipaddress))
@@ -43,12 +43,12 @@ if (!($password))
     [string]$password = $decryptPassword
     $askProfile = $true
 }
-if (!($profile))
+if (!($walkProfile) -or $askProfile)
 {
-    $profile = Read-Host "Enter Profile to use [default.profile]"
-    if (!($profile))
+    $walkProfile = Read-Host "Enter Profile to use [default.profile]"
+    if (!($walkProfile))
     {
-        $profile = "default.profile"
+        $walkProfile = "default.profile"
     }
 }
 
@@ -56,7 +56,7 @@ if (!($profile))
 Write-Host
 Write-Host "IP address:" $ipaddress
 Write-Host "Username:  " $user
-Write-Host "Profile:   " $profile
+Write-Host "Profile:   " $walkProfile
 
 
 # create class to handle SSL errors
@@ -97,7 +97,7 @@ function Check_Redfish_Connection([String]$ipaddress)
 
     try
     {
-        $respWeb = Invoke-WebRequest -Uri $uri -Method Get -UseBasicParsing -Headers $header -TimeoutSec 10 
+        $respWeb = Invoke-WebRequest -Uri $uri -Method Get -UseBasicParsing -Headers $header -TimeoutSec 5 
         $resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($respWeb)
 
         if ($resp.ContainsKey("Product"))
@@ -140,7 +140,7 @@ function Create_Session([String]$IPaddress, [String]$Login, [String]$Password)
   {
     #disable SSL checks using new class
     [System.Net.ServicePointManager]::ServerCertificateValidationCallback = [SSLHandler]::GetSSLHandler()
-    $respWeb = Invoke-WebRequest -Uri $uri -Method POST -Headers $header -Body $bodyJSON -UseBasicParsing -TimeoutSec 10
+    $respWeb = Invoke-WebRequest -Uri $uri -Method POST -Headers $header -Body $bodyJSON -UseBasicParsing -TimeoutSec 5
     $headers = $respWeb.Headers
     $sessionKey = $headers."X-Auth-Token"
     $location = $headers.Location
@@ -184,7 +184,6 @@ function Create_Dir([String]$Path)
 # Read hardware profile from json file
 function Read_Profile_JSON([String]$ProfileName)
 {
-    $profileDir = "profiles"
     $profilePath = Join-Path $PSScriptRoot "profiles" | Join-Path -ChildPath $ProfileName
 
     try
@@ -203,6 +202,7 @@ function Read_Profile_JSON([String]$ProfileName)
     }
     catch
     {
+        Write-Host 
         Write-Host "Cannot read profile:`n" $profilePath
         Write-Host "Error:"
         Write-Host $_
@@ -211,9 +211,8 @@ function Read_Profile_JSON([String]$ProfileName)
 }
 
 # Read hardware profile from a file
-function Read_Profile([String]$ProfileName)
+function Read_Profile_Param([String]$ProfileName)
 {
-    $profileDir = "profiles"
     $profilePath = Join-Path $PSScriptRoot "profiles" | Join-Path -ChildPath $ProfileName
 
     $profileObj = [System.Collections.IDictionary]@{
@@ -251,12 +250,33 @@ function Read_Profile([String]$ProfileName)
     }
     catch
     {
+        Write-Host 
         Write-Host "Cannot read profile:`n" $profilePath
         Write-Host "Error:"
         Write-Host $_
         return $null
     }
 }
+
+# Read profile if  .profile or .json
+function Read_Profile([String]$ProfileName)
+{
+    if ($ProfileName.endswith(".profile"))
+    {
+        return Read_Profile_Param -ProfileName $ProfileName
+    }
+    elseif ($ProfileName.endswith(".json"))
+    {
+        return Read_Profile_JSON -ProfileName $ProfileName
+    }
+    else
+    {
+        Write-Host
+        Write-Host "Wrong file extension: .profile or .json supported"
+        return $null
+    }
+}
+
 
 # check if redfish resource uri contains exlude values
 function Check_If_Exclude([String]$redfishResource,[Array]$excludeList)
@@ -306,7 +326,7 @@ function Get_Redfish_Resource([String]$IPaddress,[String]$Resource,[String]$Sess
         {
             Write-Host $Resource
             # get Uri
-            $respWeb = Invoke-WebRequest -Uri $uri -Method Get -Headers $header -UseBasicParsing -TimeoutSec 10
+            $respWeb = Invoke-WebRequest -Uri $uri -Method Get -Headers $header -UseBasicParsing -TimeoutSec 5
             $resp = (New-Object -TypeName System.Web.Script.Serialization.JavaScriptSerializer -Property @{MaxJsonLength=67108864}).DeserializeObject($respWeb)           
             # convert to json
             $jsonResp = $resp | ConvertTo-Json -Depth 99
@@ -409,9 +429,8 @@ if ($sessionKey)
 		New-Item $outputDir -ItemType Directory | Out-Null
 	}
 
-   # $scriptDir = $PSScriptRoot + "\output"
-
-    $profileObj = Read_Profile -ProfileName $profile
+    # Read profile and create profile object
+    $profileObj = Read_Profile -ProfileName $walkProfile
 
     Write-Host "`nLets walk...`n"
 
@@ -440,7 +459,7 @@ if ($sessionKey)
 
     # Create and write info.txt
 	$scriptMeta = [pscustomobject]@{
-		description =  'Redfish URIs collection'
+		description =  'Redfish OIDs collection'
 		application = 'redfishWalker'
 		version = $scriptVersion
 		system = $ipaddress
@@ -480,6 +499,12 @@ if ($sessionKey)
                     {
                         # Set progress Preference back
                         $progressPreference = $oldProgressPreference
+
+                        #cleanup variables
+                        $ipaddress = ""
+                        $user = ""
+                        $password = ""
+                        $walkProfile = ""
 
                     }
 

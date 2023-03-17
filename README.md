@@ -1,39 +1,32 @@
 Redfish Walker
 ==============
-Script walks through Redfish oids and collects data to ZIP archive into index.json files.
+Script walks through Redfish OIDs and collects data to ZIP archive into index.json files.
 
-Script requires profile that specifies oids to collect.
-You can use predefined profiles or create your own to collect just what you need.
-Configuration profile supported in two formats .json and .profile and stored in profiles directory under script root folder
+Script requires profile that specifies OIDs to collect.<br>
+You can use predefined profiles or create your own to collect just what you need.<br>
+Configuration profile supported in two formats `.json` and `.profile` and stored in `profiles` directory under script root folder.<br>
 
-It has four sections:
-- scan
-
-Scrip walks through all oids found 
-- tree
-
-Script walks only throug parent tree
-- once
-
-Script collect oid once
-- exclude
-
-Oids that contain text from this section excluded
+It has four sections:<br>
+`scan`&emsp;Script walks through all oids found<br> 
+`tree`&emsp;Script walks only throug parent tree<br>
+`once`&emsp;Script collect oid once<br>
+`exclude`&emsp;OIDs that contain text from this section excluded<br>
 
 ### Usage:
 
-
-Clone repository or copy redfishWalker.ps1 to your PC.
-Create or copy profiles directory in script root directory.
-Create or copy profile file and put it to profiles directory.
+- Clone repository or copy redfishWalker.ps1 to your PC<br>
+- Create or copy profiles directory to script root directory<br>
+- Create or copy profile file and put it to profiles directory<br>
 
 You can run script with parameters or interactively.
 
-Run using parameters:
+Run with parameters example:
 
-`.\redfishWalker.ps1 -ipaddress <ipaddress> -user test -password test -walkprofile ilo5.profile`
+```
+.\redfishWalker.ps1 -ipaddress 10.10.10.10 -user test -password test -walkprofile ilo5.profile
+```
 
-Run interactively:
+Run interactively example:
 
 ```
 .\redfishWalker.ps1
@@ -41,8 +34,8 @@ Run interactively:
 redfishWalker v1.0 PS - walks through Redfish OIDs
 
 Enter IP address: 10.10.10.10
-Enter Username: hpadmin
-Enter Password: ********
+Enter Username: test
+Enter Password: ****
 Enter Profile to use [default.profile]: ilo5.profile
 ```
 

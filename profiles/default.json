@@ -1,13 +1,14 @@
 {
     "scan": [
-		"/redfish",
-		"/redfish/v1/odata",
-		"/redfish/v1"
+		"/redfish/v1/"
 	],
 	"tree": [
 	],
 	"once": [
 	],
 	"exclude":	[
+		"LogServices",
+		"jsonschemas",
+		"schemastore"
 	]
 }

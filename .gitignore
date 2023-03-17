@@ -2,6 +2,7 @@
 syconf*
 gdconf*
 rwconf*
+output*
 
 # ignore iplist file
 iplist*.txt
@@ -18,3 +19,4 @@ iplist*.txt
 # ignore specific files
 *.zip
 *.xlsx
+*.html

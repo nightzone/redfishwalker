@@ -9,3 +9,5 @@
 [exclude]
 
 LogServices
+jsonschemas
+schemastore
